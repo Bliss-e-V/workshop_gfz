@@ -1,0 +1,36 @@
+# Core ML Libraries
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+datasets>=2.14.0
+
+# Hugging Face and Model Hub
+huggingface-hub>=0.17.0
+accelerate>=0.24.0
+
+# Data Science and Visualization
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+
+# Image Processing
+Pillow>=10.0.0
+opencv-python>=4.8.0
+
+# Jupyter and Interactive
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+tqdm>=4.65.0
+
+# Utilities
+scikit-learn>=1.3.0
+scipy>=1.11.0
+
+# Optional: For advanced visualizations
+grad-cam>=1.4.8
+captum>=0.6.0
+
+# Earth Observation & Hydrology
+rasterio>=1.3.0 
