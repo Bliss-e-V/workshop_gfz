@@ -8,6 +8,9 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Tuple, Dict
+from pathlib import Path
+import xarray as xr
+import random
 
 # EuroSAT class names
 EUROSAT_CLASSES = [
@@ -213,10 +216,6 @@ class HydroFloodDataset:
 
 # --- E-OBS Climate Data Loading Functions ---------------------------------------
 
-import xarray as xr
-from pathlib import Path
-
-
 class EOBSDataLoader:
     """
     Loader for E-OBS climate dataset from Copernicus Climate Change Service
@@ -349,7 +348,6 @@ def quick_load_eobs(data_dir: str = "src/data"):
 
 # --- Self-Supervised Learning Datasets for E-OBS -------------------------------
 
-import random
 from torch.utils.data import Dataset
 
 
@@ -428,6 +426,9 @@ class EOBSTemporalPredictionDataset(Dataset):
             replace=False
         )
         sample_data = self.precip_data.isel(time=sample_indices)
+        
+        # Convert to numpy array before processing
+        sample_data = sample_data.values
         
         # Handle NaN values in sample data
         sample_data = np.nan_to_num(sample_data, nan=0.0, posinf=0.0, neginf=0.0)
@@ -612,6 +613,9 @@ class EOBSMaskedModelingDataset(Dataset):
             replace=False
         )
         sample_data = self.precip_data.isel(time=sample_indices)
+        
+        # Convert to numpy array before processing
+        sample_data = sample_data.values
         
         # Handle NaN values in sample data
         sample_data = np.nan_to_num(sample_data, nan=0.0, posinf=0.0, neginf=0.0)
