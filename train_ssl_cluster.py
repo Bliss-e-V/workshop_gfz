@@ -69,10 +69,10 @@ class ClusterConfig:
         'temporal_context': 1
     }
     
-    # Training configurations
+    # Training configurations optimized for cluster GPU
     TRAINING_CONFIG = {
-        'batch_size': 64,        # Larger batch size for cluster
-        'num_workers': 8,        # More workers for cluster
+        'batch_size': 32,        # Optimized for GPU memory with mixed precision
+        'num_workers': 4,        # Balanced for GPU workload
         'learning_rate': 1e-3,   # Standard learning rate for longer training
         'weight_decay': 1e-4,
         'max_epochs_temporal': 50,
@@ -80,8 +80,11 @@ class ClusterConfig:
         'early_stopping_patience': 15,  # More patience for longer training
         'train_samples': 20000,  # Full dataset size
         'val_samples': 4000,
-        'precision': 32,
-        'gradient_clip_val': 1.0
+        'precision': 32,         # Will be overridden by device detection for GPU
+        'gradient_clip_val': 1.0,
+        'pin_memory': True,      # Faster GPU transfer
+        'persistent_workers': True,  # Reuse data loading processes
+        'prefetch_factor': 2     # Prefetch batches for GPU
     }
     
     # Paths
@@ -102,6 +105,51 @@ def setup_model_save_dir():
     """Create model save directory if it doesn't exist"""
     ClusterConfig.MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(f"Model save directory: {ClusterConfig.MODEL_SAVE_DIR}")
+
+
+def detect_and_configure_device():
+    """Detect and configure the best available device for cluster training"""
+    logger.info("🔍 Detecting available compute devices...")
+    
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        current_device = torch.cuda.current_device()
+        gpu_name = torch.cuda.get_device_name(current_device)
+        gpu_memory = torch.cuda.get_device_properties(current_device).total_memory / 1e9
+        
+        logger.info("🚀 CUDA GPU DETECTED:")
+        logger.info(f"   - GPU Count: {gpu_count}")
+        logger.info(f"   - Current GPU: {current_device} ({gpu_name})")
+        logger.info(f"   - GPU Memory: {gpu_memory:.1f} GB")
+        logger.info(f"   - CUDA Version: {torch.version.cuda}")
+        
+        # Clear GPU cache
+        torch.cuda.empty_cache()
+        
+        return {
+            'accelerator': 'gpu',
+            'devices': 1,  # Use single GPU for stability
+            'precision': '16-mixed',  # Use mixed precision for speed
+            'strategy': 'auto'
+        }
+    else:
+        logger.warning("⚠️  NO GPU DETECTED - FALLING BACK TO CPU")
+        logger.warning("   This will be SIGNIFICANTLY slower for large models!")
+        return {
+            'accelerator': 'cpu',
+            'devices': 1,
+            'precision': '32',
+            'strategy': 'auto'
+        }
+
+
+def log_training_performance():
+    """Log performance metrics for debugging"""
+    if torch.cuda.is_available():
+        logger.info("📊 GPU Memory Status:")
+        logger.info(f"   - Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+        logger.info(f"   - Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+        logger.info(f"   - Max Allocated: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
 
 def load_eobs_data():
@@ -194,14 +242,15 @@ def create_masked_datasets(precip_data):
 
 
 def create_dataloaders(train_dataset, val_dataset):
-    """Create data loaders optimized for cluster"""
+    """Create data loaders optimized for cluster GPU training"""
     train_loader = DataLoader(
         train_dataset,
         batch_size=ClusterConfig.TRAINING_CONFIG['batch_size'],
         shuffle=True,
         num_workers=ClusterConfig.TRAINING_CONFIG['num_workers'],
-        persistent_workers=True,
-        pin_memory=True,
+        persistent_workers=ClusterConfig.TRAINING_CONFIG['persistent_workers'],
+        pin_memory=ClusterConfig.TRAINING_CONFIG['pin_memory'],
+        prefetch_factor=ClusterConfig.TRAINING_CONFIG['prefetch_factor'],
         drop_last=True
     )
     
@@ -210,10 +259,17 @@ def create_dataloaders(train_dataset, val_dataset):
         batch_size=ClusterConfig.TRAINING_CONFIG['batch_size'],
         shuffle=False,
         num_workers=ClusterConfig.TRAINING_CONFIG['num_workers'],
-        persistent_workers=True,
-        pin_memory=True,
+        persistent_workers=ClusterConfig.TRAINING_CONFIG['persistent_workers'],
+        pin_memory=ClusterConfig.TRAINING_CONFIG['pin_memory'],
+        prefetch_factor=ClusterConfig.TRAINING_CONFIG['prefetch_factor'],
         drop_last=False
     )
+    
+    logger.info("📦 DataLoader Configuration:")
+    logger.info(f"   - Batch size: {ClusterConfig.TRAINING_CONFIG['batch_size']}")
+    logger.info(f"   - Num workers: {ClusterConfig.TRAINING_CONFIG['num_workers']}")
+    logger.info(f"   - Pin memory: {ClusterConfig.TRAINING_CONFIG['pin_memory']}")
+    logger.info(f"   - Persistent workers: {ClusterConfig.TRAINING_CONFIG['persistent_workers']}")
     
     return train_loader, val_loader
 
@@ -326,26 +382,36 @@ def train_temporal_model(precip_data, epochs: int):
     # Create callbacks
     callbacks = create_callbacks("temporal_prediction", epochs)
     
-    # Create trainer
+    # Configure device for optimal performance
+    device_config = detect_and_configure_device()
+    
+    # Create trainer with optimized settings
     trainer = L.Trainer(
         max_epochs=epochs,
-        accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-        devices=1,
-        precision=ClusterConfig.TRAINING_CONFIG['precision'],
+        accelerator=device_config['accelerator'],
+        devices=device_config['devices'],
+        precision=device_config['precision'],
+        strategy=device_config['strategy'],
         callbacks=callbacks,
         logger=wandb_logger,
         gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
         enable_checkpointing=True,
         enable_progress_bar=True,
         enable_model_summary=True,
-        deterministic=False  # For speed on cluster
+        deterministic=False,  # For speed on cluster
+        # Additional optimizations for cluster
+        sync_batchnorm=False,  # Disable for single GPU
+        benchmark=True,  # Optimize CUDA kernels
+        profiler=None  # Disable profiling for speed
     )
     
     # Train model
     logger.info(f"Starting temporal prediction training for {epochs} epochs...")
+    log_training_performance()  # Log initial GPU state
     start_time = datetime.now()
     trainer.fit(lightning_module, train_loader, val_loader)
     end_time = datetime.now()
+    log_training_performance()  # Log final GPU state
     
     # Log training results
     training_time = end_time - start_time
@@ -417,26 +483,36 @@ def train_masked_model(precip_data, epochs: int):
     # Create callbacks
     callbacks = create_callbacks("masked_modeling", epochs)
     
-    # Create trainer
+    # Configure device for optimal performance
+    device_config = detect_and_configure_device()
+    
+    # Create trainer with optimized settings
     trainer = L.Trainer(
         max_epochs=epochs,
-        accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-        devices=1,
-        precision=ClusterConfig.TRAINING_CONFIG['precision'],
+        accelerator=device_config['accelerator'],
+        devices=device_config['devices'],
+        precision=device_config['precision'],
+        strategy=device_config['strategy'],
         callbacks=callbacks,
         logger=wandb_logger,
         gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
         enable_checkpointing=True,
         enable_progress_bar=True,
         enable_model_summary=True,
-        deterministic=False  # For speed on cluster
+        deterministic=False,  # For speed on cluster
+        # Additional optimizations for cluster
+        sync_batchnorm=False,  # Disable for single GPU
+        benchmark=True,  # Optimize CUDA kernels
+        profiler=None  # Disable profiling for speed
     )
     
     # Train model
     logger.info(f"Starting masked modeling training for {epochs} epochs...")
+    log_training_performance()  # Log initial GPU state
     start_time = datetime.now()
     trainer.fit(lightning_module, train_loader, val_loader)
     end_time = datetime.now()
+    log_training_performance()  # Log final GPU state
     
     # Log training results
     training_time = end_time - start_time
