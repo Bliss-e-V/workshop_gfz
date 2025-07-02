@@ -113,7 +113,11 @@ def load_eobs_data():
     if 'precipitation_mean' in eobs_data:
         precip_data = eobs_data['precipitation_mean']
         logger.info(f"Precipitation data shape: {precip_data.dims}")
-        logger.info(f"Precipitation data range: {float(precip_data.min()):.3f} to {float(precip_data.max()):.3f}")
+        # Get the precipitation variable for min/max calculation
+        precip_var = precip_data['rr'] if 'rr' in precip_data.data_vars else list(precip_data.data_vars.values())[0]
+        min_val = float(precip_var.min().item())
+        max_val = float(precip_var.max().item())
+        logger.info(f"Precipitation data range: {min_val:.3f} to {max_val:.3f}")
         return precip_data
     else:
         raise ValueError("No precipitation data found in E-OBS dataset")
