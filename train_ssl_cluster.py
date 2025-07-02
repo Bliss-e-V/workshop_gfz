@@ -12,6 +12,8 @@ Usage:
 """
 
 import sys
+sys.path.append('/home/pinetzki/workshop_gfz/src/')
+
 import argparse
 import logging
 from pathlib import Path

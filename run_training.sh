@@ -6,4 +6,4 @@
 #SBATCH --output=logs/oko_training_%j.out
 #SBATCH --error=logs/ssl_training_%j.err
 
-apptainer run --nv ../../oko-ood/oko-ood.sif python train_ssl_cluster.py "$@"
+apptainer run --nv ../oko-ood/oko-ood.sif python train_ssl_cluster.py "$@"
