@@ -432,11 +432,15 @@ class TemporalPredictionModel(nn.Module):
             nn.Conv2d(hidden_channels // 2, prediction_horizon, kernel_size=1),
         )
         
-        print(f"🔮 TemporalPredictionModel initialized (OPTIMIZED FOR SPEED):")
+        # Determine if this is optimized for speed or full capacity
+        is_speed_optimized = hidden_channels <= 32 and num_layers <= 2
+        config_type = "OPTIMIZED FOR SPEED" if is_speed_optimized else "FULL CAPACITY"
+        
+        print(f"🔮 TemporalPredictionModel initialized ({config_type}):")
         print(f"   - Input: ({sequence_length}, {input_channels}, {spatial_size[0]}, {spatial_size[1]})")
         print(f"   - Output: ({prediction_horizon}, {spatial_size[0]}, {spatial_size[1]})")
-        print(f"   - Hidden channels: {hidden_channels} (reduced for fast training)")
-        print(f"   - Layers: {num_layers} (reduced for fast training)")
+        print(f"   - Hidden channels: {hidden_channels}")
+        print(f"   - Layers: {num_layers}")
     
     def forward(self, x):
         """
@@ -459,7 +463,7 @@ class TemporalPredictionModel(nn.Module):
         
         # Process sequence
         for t in range(seq_len):
-            input_t = x[:, t:t+1, :, :]  # (batch_size, 1, H, W)
+            input_t = x[:, t:t + 1, :, :]  # (batch_size, 1, H, W)
             
             # Pass through ConvLSTM layers
             for i, layer in enumerate(self.convlstm_layers):
@@ -598,10 +602,14 @@ class MaskedModelingModel(nn.Module):
         # Initialize weights properly
         self._initialize_weights()
         
-        print(f"🎭 MaskedModelingModel initialized (OPTIMIZED FOR SPEED):")
+        # Determine if this is optimized for speed or full capacity
+        is_speed_optimized = base_channels <= 32 and num_levels <= 3
+        config_type = "OPTIMIZED FOR SPEED" if is_speed_optimized else "FULL CAPACITY"
+        
+        print(f"🎭 MaskedModelingModel initialized ({config_type}):")
         print(f"   - Input channels: {self.input_channels}")
-        print(f"   - Base channels: {base_channels} (reduced for fast training)")
-        print(f"   - Levels: {num_levels} (reduced for fast training)")
+        print(f"   - Base channels: {base_channels}")
+        print(f"   - Levels: {num_levels}")
         print(f"   - Temporal context: {temporal_context}")
     
     def _initialize_weights(self):
@@ -835,8 +843,11 @@ class MaskedModelingLightningModule(L.LightningModule):
         
         # Only calculate metrics if there are masked pixels
         if mask_expanded.sum() > 0:
-            masked_mse = F.mse_loss(masked_reconstructions, masked_targets, reduction='sum') / (mask_expanded.sum() + 1e-8)
-            masked_mae = F.l1_loss(masked_reconstructions, masked_targets, reduction='sum') / (mask_expanded.sum() + 1e-8)
+            mse_numerator = F.mse_loss(masked_reconstructions, masked_targets, reduction='sum')
+            mae_numerator = F.l1_loss(masked_reconstructions, masked_targets, reduction='sum')
+            denominator = mask_expanded.sum() + 1e-8
+            masked_mse = mse_numerator / denominator
+            masked_mae = mae_numerator / denominator
         else:
             masked_mse = torch.tensor(0.0, device=loss.device)
             masked_mae = torch.tensor(0.0, device=loss.device)
