@@ -2,11 +2,13 @@
 """
 SLURM Cluster Training Script for Self-Supervised Learning Approaches
 Trains both Temporal Prediction and Masked Modeling models on E-OBS data
+Includes Weights & Biases (wandb) logging for experiment tracking
 
 Usage:
     python train_ssl_cluster.py --model temporal --epochs 50
     python train_ssl_cluster.py --model masked --epochs 40
     python train_ssl_cluster.py --model both --epochs 50
+    python train_ssl_cluster.py --model both --epochs 50 --wandb-project my-project --wandb-entity my-username
 """
 
 import sys
@@ -20,7 +22,8 @@ import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as L
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 # Add src to path
 sys.path.append('src')
@@ -83,6 +86,14 @@ class ClusterConfig:
     MODEL_SAVE_DIR = Path("/home/pinetzki/hydro_models")
     DATA_DIR = "src/data"
     LOG_DIR = "logs"
+    
+    # Wandb configuration
+    WANDB_CONFIG = {
+        'project': 'hydrology-ssl',
+        'entity': None,  # Use default wandb entity
+        'tags': ['slurm', 'cluster', 'ssl', 'eobs', 'precipitation'],
+        'group': 'cluster_training',
+    }
 
 
 def setup_model_save_dir():
@@ -285,11 +296,26 @@ def train_temporal_model(precip_data, epochs: int):
     lightning_module = create_temporal_model()
     
     # Create logger
-    tb_logger = TensorBoardLogger(
+    run_name = f"temporal_cluster_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    wandb_logger = WandbLogger(
+        name=run_name,
+        project=ClusterConfig.WANDB_CONFIG['project'],
+        entity=ClusterConfig.WANDB_CONFIG['entity'],
+        tags=ClusterConfig.WANDB_CONFIG['tags'] + ['temporal_prediction'],
+        group=ClusterConfig.WANDB_CONFIG['group'],
+        job_type='temporal_prediction',
         save_dir=ClusterConfig.LOG_DIR,
-        name="temporal_prediction",
-        version=f"cluster_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        log_model='all'  # Log model checkpoints to wandb
     )
+    
+    # Log hyperparameters
+    wandb_logger.experiment.config.update({
+        'model_type': 'temporal_prediction',
+        'model_config': ClusterConfig.TEMPORAL_CONFIG,
+        'training_config': ClusterConfig.TRAINING_CONFIG,
+        'epochs': epochs,
+        'device': 'gpu' if torch.cuda.is_available() else 'cpu'
+    })
     
     # Create callbacks
     callbacks = create_callbacks("temporal_prediction", epochs)
@@ -301,7 +327,7 @@ def train_temporal_model(precip_data, epochs: int):
         devices=1,
         precision=ClusterConfig.TRAINING_CONFIG['precision'],
         callbacks=callbacks,
-        logger=tb_logger,
+        logger=wandb_logger,
         gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
         enable_checkpointing=True,
         enable_progress_bar=True,
@@ -337,6 +363,13 @@ def train_temporal_model(precip_data, epochs: int):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
     
+    # Log final metrics to wandb
+    wandb_logger.experiment.log({
+        'final/training_time_seconds': training_time.total_seconds(),
+        'final/epochs_completed': trainer.current_epoch,
+        'final/best_val_loss': float(trainer.callback_metrics.get('val_loss', float('inf')))
+    })
+    
     return lightning_module, trainer
 
 
@@ -354,11 +387,26 @@ def train_masked_model(precip_data, epochs: int):
     lightning_module = create_masked_model()
     
     # Create logger
-    tb_logger = TensorBoardLogger(
+    run_name = f"masked_cluster_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    wandb_logger = WandbLogger(
+        name=run_name,
+        project=ClusterConfig.WANDB_CONFIG['project'],
+        entity=ClusterConfig.WANDB_CONFIG['entity'],
+        tags=ClusterConfig.WANDB_CONFIG['tags'] + ['masked_modeling'],
+        group=ClusterConfig.WANDB_CONFIG['group'],
+        job_type='masked_modeling',
         save_dir=ClusterConfig.LOG_DIR,
-        name="masked_modeling",
-        version=f"cluster_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        log_model='all'  # Log model checkpoints to wandb
     )
+    
+    # Log hyperparameters
+    wandb_logger.experiment.config.update({
+        'model_type': 'masked_modeling',
+        'model_config': ClusterConfig.MASKED_CONFIG,
+        'training_config': ClusterConfig.TRAINING_CONFIG,
+        'epochs': epochs,
+        'device': 'gpu' if torch.cuda.is_available() else 'cpu'
+    })
     
     # Create callbacks
     callbacks = create_callbacks("masked_modeling", epochs)
@@ -370,7 +418,7 @@ def train_masked_model(precip_data, epochs: int):
         devices=1,
         precision=ClusterConfig.TRAINING_CONFIG['precision'],
         callbacks=callbacks,
-        logger=tb_logger,
+        logger=wandb_logger,
         gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
         enable_checkpointing=True,
         enable_progress_bar=True,
@@ -406,6 +454,13 @@ def train_masked_model(precip_data, epochs: int):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
     
+    # Log final metrics to wandb
+    wandb_logger.experiment.log({
+        'final/training_time_seconds': training_time.total_seconds(),
+        'final/epochs_completed': trainer.current_epoch,
+        'final/best_val_loss': float(trainer.callback_metrics.get('val_loss', float('inf')))
+    })
+    
     return lightning_module, trainer
 
 
@@ -420,11 +475,25 @@ def main():
                         help='Epochs for temporal model (if different)')
     parser.add_argument('--masked-epochs', type=int, default=None,
                         help='Epochs for masked model (if different)')
+    parser.add_argument('--wandb-project', type=str, default="hydro",
+                        help='Wandb project name (overrides default)')
+    parser.add_argument('--wandb-entity', type=str, default="tu-leopinetzki",
+                        help='Wandb entity/username')
+    parser.add_argument('--wandb-tags', type=str, nargs='*', default=[],
+                        help='Additional wandb tags')
     
     args = parser.parse_args()
     
     # Setup
     setup_model_save_dir()
+    
+    # Update wandb config based on args
+    if args.wandb_project:
+        ClusterConfig.WANDB_CONFIG['project'] = args.wandb_project
+    if args.wandb_entity:
+        ClusterConfig.WANDB_CONFIG['entity'] = args.wandb_entity
+    if args.wandb_tags:
+        ClusterConfig.WANDB_CONFIG['tags'].extend(args.wandb_tags)
     
     # Set epoch counts
     temporal_epochs = args.temporal_epochs or args.epochs
@@ -438,6 +507,9 @@ def main():
     logger.info(f"Masked epochs: {masked_epochs}")
     logger.info(f"Device: {'GPU' if torch.cuda.is_available() else 'CPU'}")
     logger.info(f"Model save directory: {ClusterConfig.MODEL_SAVE_DIR}")
+    logger.info(f"Wandb project: {ClusterConfig.WANDB_CONFIG['project']}")
+    logger.info(f"Wandb entity: {ClusterConfig.WANDB_CONFIG['entity'] or 'default'}")
+    logger.info(f"Wandb tags: {ClusterConfig.WANDB_CONFIG['tags']}")
     
     # Load data
     try:
@@ -488,6 +560,9 @@ def main():
             logger.info(f"{model_name.upper()}: ✅ {result['epochs']} epochs, val_loss: {result['best_val_loss']:.4f}")
         else:
             logger.info(f"{model_name.upper()}: ❌ Failed - {result['error']}")
+    
+    # Finish all wandb runs
+    wandb.finish()
 
 
 if __name__ == "__main__":
