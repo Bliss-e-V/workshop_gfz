@@ -377,15 +377,15 @@ def get_model_summary(model: nn.Module, input_size: Tuple[int, int, int, int]) -
 
 class TemporalPredictionModel(nn.Module):
     """
-    Model for temporal prediction of precipitation using ConvLSTM architecture.
-    Predicts future precipitation patterns from past sequences.
+    Model for temporal prediction of precipitation using Vision Transformer architecture.
+    Predicts future precipitation patterns from past sequences using self-attention.
     """
     
     def __init__(
         self,
         input_channels: int = 1,
-        hidden_channels: int = 32,  # Reduced from 64 to 32 for faster training
-        num_layers: int = 2,  # Reduced from 3 to 2 for faster training
+        hidden_channels: int = 32,  # Not used in transformer, kept for compatibility
+        num_layers: int = 2,  # Not used in transformer, kept for compatibility
         sequence_length: int = 7,
         prediction_horizon: int = 1,
         spatial_size: Tuple[int, int] = (64, 64)
@@ -393,42 +393,64 @@ class TemporalPredictionModel(nn.Module):
         super().__init__()
         
         self.input_channels = input_channels
-        self.hidden_channels = hidden_channels
-        self.num_layers = num_layers
         self.sequence_length = sequence_length
         self.prediction_horizon = prediction_horizon
         self.spatial_size = spatial_size
         
-        # ConvLSTM layers for temporal modeling
-        self.convlstm_layers = nn.ModuleList()
+        # Vision Transformer from torchvision
+        from torchvision.models import vit_b_16, ViT_B_16_Weights
         
-        # First layer
-        self.convlstm_layers.append(
-            ConvLSTMCell(input_channels, hidden_channels, kernel_size=3)
+        # Load pre-trained ViT and modify for our task
+        self.vit = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+        
+        # Replace the classification head for our spatial prediction task
+        # ViT outputs 768-dimensional features
+        vit_embed_dim = 768
+        
+        # Remove the original classification head
+        self.vit.heads = nn.Identity()
+        
+        # Input preprocessing: convert single channel to RGB for ViT
+        self.input_projection = nn.Conv2d(
+            input_channels, 3, kernel_size=1, bias=False
         )
         
-        # Additional layers
-        for i in range(1, num_layers):
-            self.convlstm_layers.append(
-                ConvLSTMCell(hidden_channels, hidden_channels, kernel_size=3)
-            )
+        # Temporal processing: combine sequence features
+        self.temporal_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=vit_embed_dim,
+                nhead=8,
+                dim_feedforward=2048,
+                dropout=0.1,
+                batch_first=True
+            ),
+            num_layers=3
+        )
         
-        # Output layer for prediction
-        self.output_conv = nn.Sequential(
-            nn.Conv2d(hidden_channels, hidden_channels // 2, kernel_size=3, padding=1),
+        # Spatial feature decoder: convert ViT features back to spatial maps
+        self.spatial_decoder = nn.Sequential(
+            nn.Linear(vit_embed_dim, 512),
             nn.ReLU(inplace=True),
-            nn.Conv2d(hidden_channels // 2, prediction_horizon, kernel_size=1),
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, spatial_size[0] * spatial_size[1])
         )
         
-        # Determine if this is optimized for speed or full capacity
-        is_speed_optimized = hidden_channels <= 32 and num_layers <= 2
-        config_type = "OPTIMIZED FOR SPEED" if is_speed_optimized else "FULL CAPACITY"
+        # Output projection for final prediction
+        self.output_projection = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, prediction_horizon, kernel_size=1)
+        )
         
-        print(f"🔮 TemporalPredictionModel initialized ({config_type}):")
+        print("🔮 TemporalPredictionModel initialized (VISION TRANSFORMER):")
         print(f"   - Input: ({sequence_length}, {input_channels}, {spatial_size[0]}, {spatial_size[1]})")
         print(f"   - Output: ({prediction_horizon}, {spatial_size[0]}, {spatial_size[1]})")
-        print(f"   - Hidden channels: {hidden_channels}")
-        print(f"   - Layers: {num_layers}")
+        print("   - Architecture: Vision Transformer + Temporal Encoder")
+        print(f"   - ViT embed dim: {vit_embed_dim}")
+        print("   - Temporal encoder layers: 3")
     
     def forward(self, x):
         """
@@ -440,89 +462,47 @@ class TemporalPredictionModel(nn.Module):
         """
         batch_size, seq_len, height, width = x.shape
         
-        # Initialize hidden states for all layers
-        hidden_states = []
-        cell_states = []
+        # Process each timestep through ViT
+        temporal_features = []
         
-        for layer in self.convlstm_layers:
-            h, c = layer.init_hidden(batch_size, height, width, x.device)
-            hidden_states.append(h)
-            cell_states.append(c)
-        
-        # Process sequence
         for t in range(seq_len):
-            input_t = x[:, t:t + 1, :, :]  # (batch_size, 1, H, W)
+            # Get frame at timestep t
+            frame = x[:, t:t + 1, :, :]  # (batch_size, 1, H, W)
             
-            # Pass through ConvLSTM layers
-            for i, layer in enumerate(self.convlstm_layers):
-                if i == 0:
-                    hidden_states[i], cell_states[i] = layer(
-                        input_t, (hidden_states[i], cell_states[i])
-                    )
-                else:
-                    hidden_states[i], cell_states[i] = layer(
-                        hidden_states[i - 1], (hidden_states[i], cell_states[i])
-                    )
+            # Convert to RGB for ViT (repeat channels)
+            frame_rgb = self.input_projection(frame)  # (batch_size, 3, H, W)
+            
+            # Resize to ViT input size (224x224)
+            frame_resized = F.interpolate(
+                frame_rgb, size=(224, 224), mode='bilinear', align_corners=False
+            )
+            
+            # Extract features using ViT
+            features = self.vit(frame_resized)  # (batch_size, 768)
+            temporal_features.append(features)
         
-        # Generate predictions from final hidden state
-        final_hidden = hidden_states[-1]  # (batch_size, hidden_channels, H, W)
-        predictions = self.output_conv(final_hidden)  # (batch_size, pred_horizon, H, W)
+        # Stack temporal features
+        temporal_features = torch.stack(temporal_features, dim=1)  # (batch_size, seq_len, 768)
+        
+        # Apply temporal transformer to model dependencies
+        temporal_context = self.temporal_encoder(temporal_features)  # (batch_size, seq_len, 768)
+        
+        # Use the last timestep's context for prediction
+        final_context = temporal_context[:, -1, :]  # (batch_size, 768)
+        
+        # Decode spatial features
+        spatial_features = self.spatial_decoder(final_context)  # (batch_size, H*W)
+        
+        # Reshape to spatial map
+        spatial_map = spatial_features.view(batch_size, 1, height, width)
+        
+        # Apply output projection
+        predictions = self.output_projection(spatial_map)  # (batch_size, pred_horizon, H, W)
         
         return predictions
 
 
-class ConvLSTMCell(nn.Module):
-    """ConvLSTM cell for spatio-temporal modeling"""
-    
-    def __init__(self, input_channels, hidden_channels, kernel_size, bias=True):
-        super().__init__()
-        
-        self.input_channels = input_channels
-        self.hidden_channels = hidden_channels
-        self.kernel_size = kernel_size
-        self.padding = kernel_size // 2
-        self.bias = bias
-        
-        # Combined convolution for all gates
-        self.conv = nn.Conv2d(
-            input_channels + hidden_channels,
-            4 * hidden_channels,  # i, f, o, g gates
-            kernel_size,
-            padding=self.padding,
-            bias=bias
-        )
-    
-    def forward(self, input_tensor, cur_state):
-        h_cur, c_cur = cur_state
-        
-        # Concatenate input and hidden state
-        combined = torch.cat([input_tensor, h_cur], dim=1)
-        
-        # Apply convolution
-        combined_conv = self.conv(combined)
-        
-        # Split into gates
-        cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_channels, dim=1)
-        
-        # Apply gate functions
-        i = torch.sigmoid(cc_i)  # Input gate
-        f = torch.sigmoid(cc_f)  # Forget gate
-        o = torch.sigmoid(cc_o)  # Output gate
-        g = torch.tanh(cc_g)     # New gate
-        
-        # Update cell state
-        c_next = f * c_cur + i * g
-        
-        # Update hidden state
-        h_next = o * torch.tanh(c_next)
-        
-        return h_next, c_next
-    
-    def init_hidden(self, batch_size, height, width, device):
-        """Initialize hidden and cell states"""
-        h = torch.zeros(batch_size, self.hidden_channels, height, width, device=device)
-        c = torch.zeros(batch_size, self.hidden_channels, height, width, device=device)
-        return h, c
+# ConvLSTMCell class removed - replaced with Vision Transformer approach
 
 
 class MaskedModelingModel(nn.Module):
