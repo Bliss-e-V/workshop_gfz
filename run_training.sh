@@ -7,4 +7,5 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --output=logs/%j.out
 
-apptainer run --nv ../oko-ood/oko-ood.sif python train_ssl_cluster.py "$@"
+# Run with flash attention disabled via environment variable
+DISABLE_FLASH_ATTN=1 apptainer run --nv --env DISABLE_FLASH_ATTN=1 ../oko-ood/oko-ood.sif python train_ssl_cluster.py "$@"
