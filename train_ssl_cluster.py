@@ -403,18 +403,13 @@ def create_robust_trainer(model_name: str, epochs: int, wandb_logger):
         val_check_interval=1.0,  # Validate after each epoch
         check_val_every_n_epoch=1,  # Check validation every epoch
         log_every_n_steps=50,  # Log every 50 steps
-        flush_logs_every_n_steps=100,  # Flush logs every 100 steps
         # Memory optimization
         max_time=None,  # No time limit
         min_epochs=1,  # Minimum epochs
         min_steps=None,  # No minimum steps
         # Reproducibility with performance
         reload_dataloaders_every_n_epochs=0,  # Don't reload
-        replace_sampler_ddp=False,  # No DDP
-        # Disable problematic features
-        enable_model_summary=True,
-        enable_progress_bar=True,
-        track_grad_norm=False  # Disable gradient norm tracking to avoid issues
+        # Disable problematic features (all deprecated parameters removed)
     )
     
     return trainer
