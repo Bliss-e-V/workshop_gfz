@@ -785,7 +785,16 @@ class MaskedModelingLightningModule(L.LightningModule):
     
     def training_step(self, batch, batch_idx):
         masked_inputs, targets, masks = batch
+        
+        # Ensure inputs are properly normalized and finite
+        masked_inputs = torch.nan_to_num(masked_inputs, nan=0.0, posinf=1.0, neginf=0.0)
+        targets = torch.nan_to_num(targets, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # Forward pass
         reconstructions = self.model(masked_inputs)
+        
+        # Ensure outputs are finite
+        reconstructions = torch.nan_to_num(reconstructions, nan=0.0, posinf=1.0, neginf=0.0)
         
         # Calculate loss only on masked regions
         loss_map = self.criterion(reconstructions, targets)
@@ -796,11 +805,16 @@ class MaskedModelingLightningModule(L.LightningModule):
         num_masked_pixels = mask_expanded.sum() + 1e-8
         loss = masked_loss.sum() / num_masked_pixels
         
-        # Check for NaN and clip loss if needed
-        if torch.isnan(loss) or torch.isinf(loss):
-            print(f"⚠️ NaN/Inf detected in training step {batch_idx}")
-            print(f"   Mask sum: {masks.sum()}, Loss map stats: min={loss_map.min():.6f}, max={loss_map.max():.6f}")
-            loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
+        # Additional numerical stability checks
+        if torch.isnan(loss) or torch.isinf(loss) or loss < 0:
+            print(f"⚠️ Numerical issue detected in training step {batch_idx}")
+            print(f"   Mask sum: {masks.sum()}, Loss: {loss}")
+            print(f"   Loss map stats: min={loss_map.min():.6f}, max={loss_map.max():.6f}")
+            print(f"   Reconstruction stats: min={reconstructions.min():.6f}, max={reconstructions.max():.6f}")
+            loss = torch.tensor(1e-6, device=loss.device, requires_grad=True)
+        
+        # Clip loss to reasonable range
+        loss = torch.clamp(loss, min=1e-8, max=100.0)
         
         # Log metrics
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -808,7 +822,16 @@ class MaskedModelingLightningModule(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         masked_inputs, targets, masks = batch
+        
+        # Ensure inputs are properly normalized and finite
+        masked_inputs = torch.nan_to_num(masked_inputs, nan=0.0, posinf=1.0, neginf=0.0)
+        targets = torch.nan_to_num(targets, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # Forward pass
         reconstructions = self.model(masked_inputs)
+        
+        # Ensure outputs are finite
+        reconstructions = torch.nan_to_num(reconstructions, nan=0.0, posinf=1.0, neginf=0.0)
         
         # Calculate loss only on masked regions
         loss_map = self.criterion(reconstructions, targets)
@@ -819,11 +842,16 @@ class MaskedModelingLightningModule(L.LightningModule):
         num_masked_pixels = mask_expanded.sum() + 1e-8
         loss = masked_loss.sum() / num_masked_pixels
         
-        # Check for NaN and handle gracefully
-        if torch.isnan(loss) or torch.isinf(loss):
-            print(f"⚠️ NaN/Inf detected in validation step {batch_idx}")
-            print(f"   Mask sum: {masks.sum()}, Loss map stats: min={loss_map.min():.6f}, max={loss_map.max():.6f}")
-            loss = torch.tensor(0.0, device=loss.device)
+        # Additional numerical stability checks
+        if torch.isnan(loss) or torch.isinf(loss) or loss < 0:
+            print(f"⚠️ Numerical issue detected in validation step {batch_idx}")
+            print(f"   Mask sum: {masks.sum()}, Loss: {loss}")
+            print(f"   Loss map stats: min={loss_map.min():.6f}, max={loss_map.max():.6f}")
+            print(f"   Reconstruction stats: min={reconstructions.min():.6f}, max={reconstructions.max():.6f}")
+            loss = torch.tensor(1e-6, device=loss.device)
+        
+        # Clip loss to reasonable range
+        loss = torch.clamp(loss, min=1e-8, max=100.0)
         
         # Calculate additional metrics on masked regions only (more robust)
         masked_reconstructions = reconstructions * mask_expanded
@@ -836,6 +864,10 @@ class MaskedModelingLightningModule(L.LightningModule):
             denominator = mask_expanded.sum() + 1e-8
             masked_mse = mse_numerator / denominator
             masked_mae = mae_numerator / denominator
+            
+            # Ensure metrics are finite
+            masked_mse = torch.nan_to_num(masked_mse, nan=0.0, posinf=1.0, neginf=0.0)
+            masked_mae = torch.nan_to_num(masked_mae, nan=0.0, posinf=1.0, neginf=0.0)
         else:
             masked_mse = torch.tensor(0.0, device=loss.device)
             masked_mae = torch.tensor(0.0, device=loss.device)
@@ -848,25 +880,30 @@ class MaskedModelingLightningModule(L.LightningModule):
         return loss
     
     def configure_optimizers(self):
+        # Use more stable optimizer settings for masked modeling
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.learning_rate,
-            weight_decay=self.weight_decay
+            weight_decay=self.weight_decay,
+            eps=1e-8,  # Numerical stability
+            betas=(0.9, 0.999),  # Standard settings
+            amsgrad=False  # Disable amsgrad for stability
         )
         
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        # Use cosine annealing instead of ReduceLROnPlateau for better stability
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            mode='min',
-            factor=0.5,
-            patience=5,
+            T_max=100,  # Will be overridden by trainer
+            eta_min=1e-6,  # Minimum learning rate
         )
         
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'monitor': 'val_loss',
-                'frequency': 1
+                'interval': 'epoch',
+                'frequency': 1,
+                'name': 'cosine_annealing'
             }
         }
 

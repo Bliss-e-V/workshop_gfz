@@ -129,7 +129,7 @@ def detect_and_configure_device():
         return {
             'accelerator': 'gpu',
             'devices': 1,  # Use single GPU for stability
-            'precision': '16-mixed',  # Use mixed precision for speed
+            'precision': '32-true',  # Use 32-bit precision for better stability
             'strategy': 'auto'
         }
     else:
@@ -138,7 +138,7 @@ def detect_and_configure_device():
         return {
             'accelerator': 'cpu',
             'devices': 1,
-            'precision': '32',
+            'precision': '32-true',
             'strategy': 'auto'
         }
 
@@ -332,28 +332,33 @@ def create_masked_model():
     return lightning_module
 
 
-def create_callbacks(model_name: str, max_epochs: int):
-    """Create training callbacks"""
+def create_enhanced_callbacks(model_name: str, max_epochs: int):
+    """Create enhanced training callbacks with better gradient monitoring"""
     callbacks = []
     
-    # Early stopping
+    # Early stopping with more robust monitoring
     early_stop = EarlyStopping(
         monitor='val_loss',
         patience=ClusterConfig.TRAINING_CONFIG['early_stopping_patience'],
         verbose=True,
-        mode='min'
+        mode='min',
+        min_delta=1e-6,  # Minimum change to qualify as improvement
+        strict=True,     # Stop if monitoring metric gets worse
+        check_finite=True  # Check for finite values
     )
     callbacks.append(early_stop)
     
-    # Model checkpointing
+    # Model checkpointing with better settings
     checkpoint_callback = ModelCheckpoint(
         dirpath=ClusterConfig.MODEL_SAVE_DIR / f"{model_name}_checkpoints",
-        filename=f"{model_name}_" + "{epoch:02d}_{val_loss:.4f}",
+        filename=f"{model_name}_" + "{epoch:02d}_{val_loss:.6f}",
         monitor='val_loss',
         mode='min',
         save_top_k=3,
         save_last=True,
-        verbose=True
+        verbose=True,
+        auto_insert_metric_name=False,
+        save_on_train_epoch_end=False  # Save only after validation
     )
     callbacks.append(checkpoint_callback)
     
@@ -362,6 +367,57 @@ def create_callbacks(model_name: str, max_epochs: int):
     callbacks.append(lr_monitor)
     
     return callbacks
+
+
+def create_robust_trainer(model_name: str, epochs: int, wandb_logger):
+    """Create a robust trainer with enhanced numerical stability"""
+    
+    # Get device configuration
+    device_config = detect_and_configure_device()
+    
+    # Create enhanced callbacks
+    callbacks = create_enhanced_callbacks(model_name, epochs)
+    
+    # Create trainer with enhanced stability settings
+    trainer = L.Trainer(
+        max_epochs=epochs,
+        accelerator=device_config['accelerator'],
+        devices=device_config['devices'],
+        precision=device_config['precision'],
+        strategy=device_config['strategy'],
+        callbacks=callbacks,
+        logger=wandb_logger,
+        gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
+        gradient_clip_algorithm='norm',  # Use norm-based clipping
+        enable_checkpointing=True,
+        enable_progress_bar=True,
+        enable_model_summary=True,
+        deterministic=False,  # For speed on cluster
+        # Enhanced numerical stability
+        sync_batchnorm=False,  # Disable for single GPU
+        benchmark=True,  # Optimize CUDA kernels
+        profiler=None,  # Disable profiling for speed
+        detect_anomaly=False,  # Disable anomaly detection for speed
+        # Additional stability settings
+        accumulate_grad_batches=1,  # No gradient accumulation
+        val_check_interval=1.0,  # Validate after each epoch
+        check_val_every_n_epoch=1,  # Check validation every epoch
+        log_every_n_steps=50,  # Log every 50 steps
+        flush_logs_every_n_steps=100,  # Flush logs every 100 steps
+        # Memory optimization
+        max_time=None,  # No time limit
+        min_epochs=1,  # Minimum epochs
+        min_steps=None,  # No minimum steps
+        # Reproducibility with performance
+        reload_dataloaders_every_n_epochs=0,  # Don't reload
+        replace_sampler_ddp=False,  # No DDP
+        # Disable problematic features
+        enable_model_summary=True,
+        enable_progress_bar=True,
+        track_grad_norm=False  # Disable gradient norm tracking to avoid issues
+    )
+    
+    return trainer
 
 
 def train_temporal_model(precip_data, epochs: int):
@@ -399,31 +455,8 @@ def train_temporal_model(precip_data, epochs: int):
         'device': 'gpu' if torch.cuda.is_available() else 'cpu'
     })
     
-    # Create callbacks
-    callbacks = create_callbacks("temporal_prediction", epochs)
-    
-    # Configure device for optimal performance
-    device_config = detect_and_configure_device()
-    
-    # Create trainer with optimized settings
-    trainer = L.Trainer(
-        max_epochs=epochs,
-        accelerator=device_config['accelerator'],
-        devices=device_config['devices'],
-        precision=device_config['precision'],
-        strategy=device_config['strategy'],
-        callbacks=callbacks,
-        logger=wandb_logger,
-        gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
-        enable_checkpointing=True,
-        enable_progress_bar=True,
-        enable_model_summary=True,
-        deterministic=False,  # For speed on cluster
-        # Additional optimizations for cluster
-        sync_batchnorm=False,  # Disable for single GPU
-        benchmark=True,  # Optimize CUDA kernels
-        profiler=None  # Disable profiling for speed
-    )
+    # Create robust trainer with enhanced numerical stability
+    trainer = create_robust_trainer("temporal_prediction", epochs, wandb_logger)
     
     # Train model
     logger.info(f"Starting temporal prediction training for {epochs} epochs...")
@@ -501,31 +534,8 @@ def train_masked_model(precip_data, epochs: int):
         'device': 'gpu' if torch.cuda.is_available() else 'cpu'
     })
     
-    # Create callbacks
-    callbacks = create_callbacks("masked_modeling", epochs)
-    
-    # Configure device for optimal performance
-    device_config = detect_and_configure_device()
-    
-    # Create trainer with optimized settings
-    trainer = L.Trainer(
-        max_epochs=epochs,
-        accelerator=device_config['accelerator'],
-        devices=device_config['devices'],
-        precision=device_config['precision'],
-        strategy=device_config['strategy'],
-        callbacks=callbacks,
-        logger=wandb_logger,
-        gradient_clip_val=ClusterConfig.TRAINING_CONFIG['gradient_clip_val'],
-        enable_checkpointing=True,
-        enable_progress_bar=True,
-        enable_model_summary=True,
-        deterministic=False,  # For speed on cluster
-        # Additional optimizations for cluster
-        sync_batchnorm=False,  # Disable for single GPU
-        benchmark=True,  # Optimize CUDA kernels
-        profiler=None  # Disable profiling for speed
-    )
+    # Create robust trainer with enhanced numerical stability
+    trainer = create_robust_trainer("masked_modeling", epochs, wandb_logger)
     
     # Train model
     logger.info(f"Starting masked modeling training for {epochs} epochs...")
