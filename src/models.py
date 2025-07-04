@@ -5,7 +5,7 @@ CNN vs Vision Transformer comparison
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import ViTModel, ViTConfig
+from torchvision.models import vit_b_16, ViT_B_16_Weights
 from typing import Tuple, Dict, Optional
 import pytorch_lightning as L
 
@@ -180,7 +180,7 @@ class FloodCNN(nn.Module):
 class SatelliteViT(nn.Module):
     """
     Vision Transformer for satellite image classification
-    Using HuggingFace transformers with custom head
+    Using torchvision's ViT implementation
     """
     
     def __init__(self, num_classes: int = 10, pretrained: bool = True):
@@ -189,57 +189,51 @@ class SatelliteViT(nn.Module):
         self.num_classes = num_classes
         
         if pretrained:
-            # Use pre-trained ViT-Base
-            self.vit = ViTModel.from_pretrained('google/vit-base-patch16-224')
+            # Use pre-trained ViT-Base from torchvision
+            self.vit = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+            # Replace the classification head
+            self.vit.heads = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Dropout(0.1),
+                nn.Linear(768, 512),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, num_classes)
+            )
         else:
             # Create from scratch for demonstration
-            config = ViTConfig(
-                hidden_size=768,
-                num_hidden_layers=12,
-                num_attention_heads=12,
-                intermediate_size=3072,
-                image_size=224,
-                patch_size=16,
-                num_channels=3,
-                num_labels=num_classes
+            self.vit = vit_b_16(weights=None)
+            # Replace the classification head
+            self.vit.heads = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Dropout(0.1),
+                nn.Linear(768, 512),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, num_classes)
             )
-            self.vit = ViTModel(config)
         
-        # Custom classification head
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(self.vit.config.hidden_size),
-            nn.Dropout(0.1),
-            nn.Linear(self.vit.config.hidden_size, 512),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(512, num_classes)
-        )
-        
-        # Store attention weights for visualization
+        # Store attention weights for visualization (simplified for torchvision)
         self.attention_weights = None
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Get ViT outputs with attention weights
-        outputs = self.vit(x, output_attentions=True)
-        
-        # Store attention weights for visualization
-        self.attention_weights = outputs.attentions
-        
-        # Use CLS token for classification
-        cls_output = outputs.last_hidden_state[:, 0]  # CLS token
-        logits = self.classifier(cls_output)
-        
+        # Forward pass through ViT
+        # Note: torchvision's ViT doesn't expose attention weights as easily
+        # For attention visualization, we'd need to register hooks or use a different approach
+        logits = self.vit(x)
         return logits
     
     def get_attention_weights(self) -> Optional[Tuple]:
         """Return attention weights for visualization"""
-        return self.attention_weights
+        # Note: torchvision's ViT doesn't expose attention weights by default
+        # This would require registering hooks to capture attention from the transformer layers
+        return None
 
 
 class FloodViT(nn.Module):
     """
     Lightweight Vision Transformer for binary flood detection
-    Uses fewer transformer layers and smaller hidden dimensions
+    Uses torchvision's ViT-Base but with binary classification head
     """
     
     def __init__(self, pretrained: bool = True):
@@ -248,51 +242,45 @@ class FloodViT(nn.Module):
         self.num_classes = 2
         
         if pretrained:
-            # Start with pre-trained but adapt for binary classification
-            self.vit = ViTModel.from_pretrained('google/vit-base-patch16-224')
-        else:
-            # Smaller config for binary classification
-            config = ViTConfig(
-                hidden_size=384,  # Smaller hidden size
-                num_hidden_layers=6,  # Fewer layers
-                num_attention_heads=6,
-                intermediate_size=1536,
-                image_size=224,
-                patch_size=16,
-                num_channels=3,
-                num_labels=2
+            # Start with pre-trained ViT-Base from torchvision
+            self.vit = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+            # Replace with binary classification head
+            self.vit.heads = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Dropout(0.1),
+                nn.Linear(768, 128),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(128, 2)  # Binary output
             )
-            self.vit = ViTModel(config)
+        else:
+            # Create from scratch for demonstration
+            self.vit = vit_b_16(weights=None)
+            # Replace with binary classification head
+            self.vit.heads = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Dropout(0.1),
+                nn.Linear(768, 128),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(128, 2)  # Binary output
+            )
         
-        # Binary classification head
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(self.vit.config.hidden_size),
-            nn.Dropout(0.1),
-            nn.Linear(self.vit.config.hidden_size, 128),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 2)  # Binary output
-        )
-        
-        # Store attention weights for visualization
+        # Store attention weights for visualization (simplified for torchvision)
         self.attention_weights = None
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Get ViT outputs with attention weights
-        outputs = self.vit(x, output_attentions=True)
-        
-        # Store attention weights for visualization
-        self.attention_weights = outputs.attentions
-        
-        # Use CLS token for classification
-        cls_output = outputs.last_hidden_state[:, 0]  # CLS token
-        logits = self.classifier(cls_output)
-        
+        # Forward pass through ViT
+        # Note: torchvision's ViT doesn't expose attention weights as easily
+        # For attention visualization, we'd need to register hooks or use a different approach
+        logits = self.vit(x)
         return logits
     
     def get_attention_weights(self) -> Optional[Tuple]:
         """Return attention weights for visualization"""
-        return self.attention_weights
+        # Note: torchvision's ViT doesn't expose attention weights by default
+        # This would require registering hooks to capture attention from the transformer layers
+        return None
 
 
 class ModelComparator:
