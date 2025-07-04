@@ -50,28 +50,28 @@ logger = logging.getLogger(__name__)
 
 
 class ClusterConfig:
-    """Configuration for cluster training - optimized for performance"""
+    """Configuration for cluster training - optimized for 40GB GPU"""
     
-    # Model configurations (full capacity for cluster)
+    # Model configurations (optimized for 40GB GPU)
     TEMPORAL_CONFIG = {
         'input_channels': 1,
-        'hidden_channels': 128,  # Increased from 32 for better performance
-        'num_layers': 4,         # Increased from 2 for better performance
+        'hidden_channels': 64,   # Reduced from 128 to fit in 40GB
+        'num_layers': 3,         # Reduced from 4 to fit in 40GB
         'sequence_length': 7,
         'prediction_horizon': 1,
-        'spatial_size': (128, 128)  # Larger spatial resolution
+        'spatial_size': (96, 96)  # Reduced from (128, 128) to fit in 40GB
     }
     
     MASKED_CONFIG = {
         'input_channels': 1,
-        'base_channels': 128,    # Increased from 32 for better performance
-        'num_levels': 5,         # Increased from 3 for better performance
+        'base_channels': 64,     # Reduced from 128 to fit in 40GB
+        'num_levels': 4,         # Reduced from 5 to fit in 40GB
         'temporal_context': 1
     }
     
-    # Training configurations optimized for cluster GPU
+    # Training configurations optimized for 40GB GPU
     TRAINING_CONFIG = {
-        'batch_size': 32,        # Optimized for GPU memory with mixed precision
+        'batch_size': 16,        # Reduced from 32 to fit in 40GB
         'num_workers': 4,        # Balanced for GPU workload
         'learning_rate': 1e-3,   # Standard learning rate for longer training
         'weight_decay': 1e-4,
@@ -96,7 +96,7 @@ class ClusterConfig:
     WANDB_CONFIG = {
         'project': 'hydrology-ssl',
         'entity': None,  # Use default wandb entity
-        'tags': ['slurm', 'cluster', 'ssl', 'eobs', 'precipitation'],
+        'tags': ['slurm', 'cluster', 'ssl', 'eobs', 'precipitation', '40gb_optimized'],
         'group': 'cluster_training',
     }
 
@@ -150,6 +150,26 @@ def log_training_performance():
         logger.info(f"   - Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
         logger.info(f"   - Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
         logger.info(f"   - Max Allocated: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
+        free_memory = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()) / 1e9
+        logger.info(f"   - Free: {free_memory:.2f} GB")
+
+
+def optimize_memory_usage():
+    """Optimize memory usage for training"""
+    if torch.cuda.is_available():
+        # Clear GPU cache
+        torch.cuda.empty_cache()
+        
+        # Reset peak memory stats
+        torch.cuda.reset_peak_memory_stats()
+        
+        # Set memory fraction (use 90% of available memory)
+        torch.cuda.set_per_process_memory_fraction(0.9)
+        
+        logger.info("✅ Memory optimizations applied:")
+        logger.info("   - GPU cache cleared")
+        logger.info("   - Peak memory stats reset")
+        logger.info("   - Memory fraction set to 90%")
 
 
 def load_eobs_data():
@@ -407,6 +427,7 @@ def train_temporal_model(precip_data, epochs: int):
     
     # Train model
     logger.info(f"Starting temporal prediction training for {epochs} epochs...")
+    optimize_memory_usage()  # Optimize GPU memory before training
     log_training_performance()  # Log initial GPU state
     start_time = datetime.now()
     trainer.fit(lightning_module, train_loader, val_loader)
@@ -508,6 +529,7 @@ def train_masked_model(precip_data, epochs: int):
     
     # Train model
     logger.info(f"Starting masked modeling training for {epochs} epochs...")
+    optimize_memory_usage()  # Optimize GPU memory before training
     log_training_performance()  # Log initial GPU state
     start_time = datetime.now()
     trainer.fit(lightning_module, train_loader, val_loader)
