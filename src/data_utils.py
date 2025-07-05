@@ -146,15 +146,15 @@ class EOBSTemporalPredictionDataset(Dataset):
             range(self.num_times - self.sequence_length - self.prediction_horizon + 1)
         )
 
-        # Calculate normalization statistics
-        if self.normalize:
-            self._calculate_stats()
-
-        # Get spatial dimensions
+        # Get spatial dimensions (must be set before _calculate_stats)
         self.spatial_dims = (
             len(self.precip_var.latitude),
             len(self.precip_var.longitude),
         )
+
+        # Calculate normalization statistics
+        if self.normalize:
+            self._calculate_stats()
 
         print("📊 Temporal Dataset created:")
         print(f"   - Sequence length: {self.sequence_length}")
@@ -328,15 +328,15 @@ class EOBSMaskedModelingDataset(Dataset):
         self.num_times = len(self.precip_var.time)
         self.valid_time_indices = list(range(self.num_times))
 
-        # Calculate normalization statistics
-        if self.normalize:
-            self._calculate_stats()
-
         # Get spatial dimensions
         self.spatial_dims = (
             len(self.precip_var.latitude),
             len(self.precip_var.longitude),
         )
+
+        # Calculate normalization statistics
+        if self.normalize:
+            self._calculate_stats()
 
         print("🎭 Masked Modeling Dataset created:")
         print(f"   - Spatial size: {self.spatial_size}")

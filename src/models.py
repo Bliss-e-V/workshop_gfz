@@ -198,7 +198,7 @@ class TemporalPredictionModel(nn.Module):
                 context = torch.cat([patches[:, 1:], pred_patches.unsqueeze(1)], dim=1)
 
             # Prepare input for transformer (flatten time and patch dimensions)
-            context_flat = context.view(
+            context_flat = context.reshape(
                 batch_size, sequence_length * self.num_patches, self.hidden_channels
             )
 
@@ -468,7 +468,10 @@ class TemporalPredictionLightningModule(L.LightningModule):
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=5, verbose=True
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=5,
         )
 
         return {
