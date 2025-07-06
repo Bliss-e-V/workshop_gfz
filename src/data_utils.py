@@ -75,6 +75,50 @@ class EOBSDataLoader:
 
         return precipitation_data
 
+    def load_precipitation_mean(
+        self, prefer_subsampled: bool = True, subsample_size: int = 2000
+    ):
+        """Load only the precipitation mean data from E-OBS netCDF files
+
+        Args:
+            prefer_subsampled: Whether to prefer subsampled files over full dataset
+            subsample_size: Size of subsample to look for
+
+        Returns:
+            xarray.Dataset: The precipitation mean dataset
+        """
+        # Define file paths (subsampled first, then full dataset)
+        if prefer_subsampled:
+            file_paths = [
+                self.data_dir
+                / f"rr_ens_mean_0.25deg_reg_v31.0e_sub{subsample_size}.nc_sub",
+                self.data_dir / "rr_ens_mean_0.25deg_reg_v31.0e.nc",
+            ]
+        else:
+            file_paths = [self.data_dir / "rr_ens_mean_0.25deg_reg_v31.0e.nc"]
+
+        for file_path in file_paths:
+            if file_path.exists():
+                print(f"📊 Loading precipitation_mean data from {file_path.name}")
+                dataset = xr.open_dataset(file_path, chunks={"time": 1000})
+                print(f"   - Shape: {dataset.dims}")
+                print(f"   - Variables: {list(dataset.data_vars.keys())}")
+                if "time" in dataset.dims:
+                    print(f"   - Time steps: {len(dataset.time)}")
+                    time_values = dataset.time.values
+                    print(
+                        f"   - Time range: {str(time_values[0])[:10]} to {str(time_values[-1])[:10]}"
+                    )
+                    # Indicate if we're using subsampled data
+                    if len(dataset.time) < 10000:
+                        print("   🚀 Using subsampled data for faster processing!")
+                    else:
+                        print("   📚 Using full dataset")
+                return dataset
+
+        print("⚠️  No precipitation mean files found")
+        return None
+
     def load_elevation_data(self):
         """Load elevation data from E-OBS netCDF files"""
         elevation_file = self.data_dir / "elev_ens_0.25deg_reg_v31.0e.nc"
@@ -160,6 +204,30 @@ def quick_load_eobs(
         data["elevation"] = elevation_data
 
     return data
+
+
+def quick_load_precipitation_mean(
+    data_dir: str = "src/data",
+    prefer_subsampled: bool = True,
+    subsample_size: int = 2000,
+):
+    """Quick function to load only the precipitation mean data from E-OBS
+
+    This is a convenience function that returns a single xarray Dataset
+    instead of a dictionary, making it easier to use in notebooks.
+
+    Args:
+        data_dir: Directory containing the data files
+        prefer_subsampled: Whether to prefer subsampled files over full dataset
+        subsample_size: Size of subsample to look for
+
+    Returns:
+        xarray.Dataset: The precipitation mean dataset
+    """
+    loader = EOBSDataLoader(data_dir)
+    return loader.load_precipitation_mean(
+        prefer_subsampled=prefer_subsampled, subsample_size=subsample_size
+    )
 
 
 class EOBSTemporalPredictionDataset(Dataset):
