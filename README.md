@@ -11,6 +11,17 @@ We work with E-OBS daily precipitation data from the [European Climate Assessmen
 - **Time period**: 1950-2024 (version 31.0e)
 - **Spatial coverage**: Europe (-40.4°E to 75.4°E, 25.4°N to 75.4°N)
 
+### 🚀 Quick Start Dataset
+
+For faster development and testing, we provide a **subsampled dataset** with 2000 time steps (1950-1955) that is loaded by default:
+
+- **Subsampled files**: `rr_ens_mean_0.25deg_reg_v31.0e_sub2000.nc_sub` (~27MB each)
+- **Time range**: 1950-01-01 to 1955-06-23 (5.5 years)
+- **Original files**: `rr_ens_mean_0.25deg_reg_v31.0e.nc` (~348MB each)
+- **Automatic fallback**: If subsampled files are not found, the full dataset is loaded
+
+> 💡 **Note**: The data loader automatically prefers the subsampled files for faster loading and experimentation. To force loading the full dataset, use `loader.load_precipitation_data(prefer_subsampled=False)`.
+
 ## 🎯 Self-Supervised Learning Approaches
 
 ### 1. Temporal Prediction 🔮
@@ -56,6 +67,12 @@ hydrology_seminar/
 ├── notebooks/
 │   └── self_supervised_eobs_example.ipynb    # Main demonstration notebook
 ├── src/
+|   ├── data/
+|   |   ├── rr_ens_mean_0.25deg_reg_v31.0e_sub2000.nc      # Subsampled precipitation mean (2000 time steps)
+|   |   ├── rr_ens_spread_0.25deg_reg_v31.0e_sub2000.nc    # Subsampled precipitation spread (2000 time steps)
+|   |   ├── rr_ens_mean_0.25deg_reg_v31.0e.nc              # Full precipitation mean dataset
+|   |   ├── rr_ens_spread_0.25deg_reg_v31.0e.nc            # Full precipitation spread dataset
+|   |   └── elev_ens_0.25deg_reg_v31.0e.nc                 # Elevation data
 │   ├── data_utils.py                         # E-OBS data loading and processing
 │   └── models.py                             # Self-supervised learning models
 ├── requirements.txt                          # Python dependencies

@@ -400,6 +400,33 @@ class MaskedModelingModel(nn.Module):
 
         return x
 
+    def extract_bottleneck_embeddings(self, x):
+        """
+        Extract bottleneck embeddings from the deepest layer of the UNet
+        Args:
+            x: (batch_size, channels, height, width)
+        Returns:
+            embeddings: (batch_size, bottleneck_dim)
+        """
+        # Run through encoder to get bottleneck features
+        encoder_features = []
+
+        for i, encoder_block in enumerate(self.encoder):
+            x = encoder_block(x)
+            encoder_features.append(x)
+
+            if i < len(self.encoder_pools):
+                x = self.encoder_pools[i](x)
+
+        # The bottleneck is the last encoder feature (deepest layer)
+        bottleneck_features = encoder_features[-1]  # This is the bottleneck
+
+        # Flatten the spatial dimensions to get embeddings
+        batch_size = bottleneck_features.size(0)
+        embeddings = bottleneck_features.view(batch_size, -1)
+
+        return embeddings
+
 
 class TemporalPredictionLightningModule(L.LightningModule):
     """PyTorch Lightning module for temporal prediction"""

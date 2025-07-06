@@ -18,24 +18,60 @@ class EOBSDataLoader:
         self.data_dir = Path(data_dir)
         print(f"📊 Initializing EOBSDataLoader with data directory: {self.data_dir}")
 
-    def load_precipitation_data(self):
-        """Load precipitation data from E-OBS netCDF files"""
-        precipitation_files = {
-            "precipitation_mean": self.data_dir / "rr_ens_mean_0.25deg_reg_v31.0e.nc",
-            "precipitation_spread": self.data_dir
-            / "rr_ens_spread_0.25deg_reg_v31.0e.nc",
-        }
+    def load_precipitation_data(
+        self, prefer_subsampled: bool = True, subsample_size: int = 2000
+    ):
+        """Load precipitation data from E-OBS netCDF files
+
+        Args:
+            prefer_subsampled: Whether to prefer subsampled files over full dataset
+            subsample_size: Size of subsample to look for
+        """
+        # Define file mappings (subsampled first, then full dataset)
+        if prefer_subsampled:
+            precipitation_files = {
+                "precipitation_mean": [
+                    self.data_dir
+                    / f"rr_ens_mean_0.25deg_reg_v31.0e_sub{subsample_size}.nc_sub",
+                    self.data_dir / "rr_ens_mean_0.25deg_reg_v31.0e.nc",
+                ],
+                "precipitation_spread": [
+                    self.data_dir
+                    / f"rr_ens_spread_0.25deg_reg_v31.0e_sub{subsample_size}.nc_sub",
+                    self.data_dir / "rr_ens_spread_0.25deg_reg_v31.0e.nc",
+                ],
+            }
+        else:
+            precipitation_files = {
+                "precipitation_mean": [
+                    self.data_dir / "rr_ens_mean_0.25deg_reg_v31.0e.nc"
+                ],
+                "precipitation_spread": [
+                    self.data_dir / "rr_ens_spread_0.25deg_reg_v31.0e.nc"
+                ],
+            }
 
         precipitation_data = {}
-        for key, file_path in precipitation_files.items():
-            if file_path.exists():
-                print(f"📊 Loading {key} data from {file_path}")
-                dataset = xr.open_dataset(file_path, chunks={"time": 1000})
-                print(f"   - Shape: {dataset.dims}")
-                print(f"   - Variables: {list(dataset.data_vars.keys())}")
-                precipitation_data[key] = dataset
-            else:
-                print(f"⚠️  File not found: {file_path}")
+        for key, file_paths in precipitation_files.items():
+            dataset_loaded = False
+            for file_path in file_paths:
+                if file_path.exists():
+                    print(f"📊 Loading {key} data from {file_path.name}")
+                    dataset = xr.open_dataset(file_path, chunks={"time": 1000})
+                    print(f"   - Shape: {dataset.dims}")
+                    print(f"   - Variables: {list(dataset.data_vars.keys())}")
+                    if "time" in dataset.dims:
+                        print(f"   - Time steps: {len(dataset.time)}")
+                        time_values = dataset.time.values
+                        print(
+                            f"   - Time range: {str(time_values[0])[:10]} to {str(time_values[-1])[:10]}"
+                        )
+                    precipitation_data[key] = dataset
+                    dataset_loaded = True
+                    break
+
+            if not dataset_loaded:
+                print(f"⚠️  No files found for {key}")
 
         return precipitation_data
 
@@ -95,10 +131,35 @@ class EOBSDataLoader:
         return info
 
 
-def quick_load_eobs(data_dir: str = "src/data"):
-    """Quick function to load E-OBS data"""
+def quick_load_eobs(
+    data_dir: str = "src/data",
+    prefer_subsampled: bool = True,
+    subsample_size: int = 2000,
+):
+    """Quick function to load E-OBS data
+
+    Args:
+        data_dir: Directory containing the data files
+        prefer_subsampled: Whether to prefer subsampled files over full dataset
+        subsample_size: Size of subsample to look for
+    """
     loader = EOBSDataLoader(data_dir)
-    return loader.load_all_data()
+    # Update load_all_data to pass parameters
+    data = {}
+
+    # Load precipitation data with preferences
+    precip_data = loader.load_precipitation_data(
+        prefer_subsampled=prefer_subsampled, subsample_size=subsample_size
+    )
+    if precip_data:
+        data.update(precip_data)
+
+    # Load elevation data
+    elevation_data = loader.load_elevation_data()
+    if elevation_data is not None:
+        data["elevation"] = elevation_data
+
+    return data
 
 
 class EOBSTemporalPredictionDataset(Dataset):
